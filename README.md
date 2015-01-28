@@ -6,10 +6,7 @@ The algorithm is not optimal in many senses, but it's thought for educational pu
 
 You can find a step-by-step explanation in [my blog](http://jponttuset.github.io/solving-sudokus-like-a-pro-1/).
 
-To compile, you have to install [OpenCV](http://opencv.org) and then:
-
-``````
-
+To compile, you have to install [OpenCV](http://opencv.org) and link against it.
 
 I hope you enjoy it!
 
