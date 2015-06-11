@@ -1,18 +1,27 @@
-
-#include "opencv2/highgui/highgui.hpp"
-#include "opencv2/core/core.hpp"
-#include <opencv2/imgproc/imgproc.hpp>
-
+/* Basic includes */
 #include <iostream>
 #include <stdio.h>
 #include <cmath>
-
 #include <fstream>
+#include <sstream>
+
+/* STL containers */
 #include <set>
 #include <vector>
 #include <unordered_set>
 #include <string>
-#include <sstream>
+
+/* OpenCV includes */
+#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/core/core.hpp"
+#include <opencv2/imgproc/imgproc.hpp>
+
+/* Tesseract OCR includes */
+#include <tesseract/baseapi.h>
+#include <leptonica/allheaders.h>
+
+/* Our functions to solve the Sudoku */
+#include "sudoku.hpp"
 
 using namespace cv;
 using namespace std;
@@ -28,6 +37,8 @@ int lowThreshold = 30;
  *  2 - Hough lines
  *  3 - Grid intersections
  *  4 - Number cells
+ *  5 - Recognized numbers
+ *  6 - Solved Sudoku
  */
 int mode = 0;
 
@@ -207,10 +218,48 @@ Point2f mean_intersection(const set<size_t>& h_set, const set<size_t>& v_set, co
     return mean;
 }
 
-
-
-int process(VideoCapture& capture)
+/* Function to recognize a digit in a binarized image using Tesseract 
+ *  Note that we should limit Tesseract to look for digits only, but I didn't manage to do it from the C++ API... :)
+ *  That's why we need to handle the 'I' as a '1', er similar...
+ */
+unsigned int recognize_digit(Mat& im,tesseract::TessBaseAPI& tess)
 {
+    tess.SetImage((uchar*)im.data, im.size().width, im.size().height, im.channels(), (int)im.step1());
+    tess.Recognize(0);
+    const char* out = tess.GetUTF8Text();
+    if (out)
+        if(out[0]=='1' or out[0]=='I' or out[0]=='i' or out[0]=='/' or out[0]=='|' or out[0]=='l' or out[0]=='t')
+            return 1;
+        else if(out[0]=='2')
+            return 2;
+        else if(out[0]=='3')
+            return 3;
+        else if(out[0]=='4')
+            return 4;
+        else if(out[0]=='5' or out[0]=='S' or out[0]=='s')
+            return 5;
+        else if(out[0]=='6')
+            return 6;
+        else if(out[0]=='7')
+            return 7;
+        else if(out[0]=='8')
+            return 8;
+        else if(out[0]=='9')
+            return 9;
+        else
+            return 0;
+    else
+        return 0;
+}
+
+
+
+
+int main()
+{
+    /* Class to capture the webcam feed */
+    VideoCapture capture(0);
+    
     /* Create the window */
     string window_name = "Sudoku AR Solver";
     namedWindow(window_name, CV_WINDOW_KEEPRATIO);
@@ -218,10 +267,17 @@ int process(VideoCapture& capture)
     /* Frame containers */
     Mat raw_frame,frame,frame_gray,blurred_frame_gray,detected_edges,color_edges;
     
+    /* Start Tesseract OCR, we will use it to recognize digits */
+    tesseract::TessBaseAPI tess;
+    if (tess.Init("/opt/local/share/tessdata/", "eng")) {
+        fprintf(stderr, "Could not initialize tesseract.\n");
+        exit(1);
+    }
+    
     /* Global loop */
     while(true)
     {
-        /* Capture the frame from the webcam */
+        /* Capture one frame from the webcam */
         capture >> frame;
         if (frame.empty())
             break;
@@ -237,7 +293,7 @@ int process(VideoCapture& capture)
         else
         {
             /* To gray and blur for the Canny */
-            cvtColor( frame, frame_gray, CV_BGR2GRAY);
+            cvtColor(frame, frame_gray, CV_BGR2GRAY);
             blur( frame_gray, blurred_frame_gray, Size(3,3) );
             
             /* Canny edge detector */
@@ -366,10 +422,107 @@ int process(VideoCapture& capture)
                                     boxes[ii][jj].second = dr;
                                 }
                             
-                            /* Plot the boxes */
-                            for(std::size_t ii=0; ii<9; ++ii)
-                                for(std::size_t jj=0; jj<9; ++jj)
-                                    rectangle(frame, boxes[ii][jj].first, boxes[ii][jj].second, Scalar(0,0,255) );
+                            if (mode==4)
+                            {
+                                /* Plot the boxes */
+                                for(std::size_t ii=0; ii<9; ++ii)
+                                    for(std::size_t jj=0; jj<9; ++jj)
+                                        rectangle(frame, boxes[ii][jj].first, boxes[ii][jj].second, Scalar(0,0,255) );
+                            }
+                            else
+                            {
+                                /* Get the image of the Sudoku full box by getting the first and last grids
+                                 *  - ulx: Up Left X
+                                 *  - uly: Up Left Y
+                                 *  - drx: Down Right X
+                                 *  - dry: Down Right Y
+                                 */
+                                unsigned int ulx = round(min(corners[0][0].x,corners[9][0].x));
+                                unsigned int uly = round(min(corners[0][0].y,corners[0][9].y));
+                                
+                                unsigned int drx = round(max(corners[0][9].x,corners[9][9].x));
+                                unsigned int dry = round(max(corners[9][0].y,corners[9][9].y));
+                                
+                                /* This is to be robust against some degenerate cases */
+                                if(ulx>sx or uly>sy or drx>sx or dry>sy)
+                                    continue;
+                                
+                                /* Crop the image */
+                                Mat sudoku_box(frame_gray, cv::Rect(ulx, uly,
+                                                                    drx-ulx,
+                                                                    dry-uly));
+                                
+                                /* Apply local thresholding */
+                                Mat sudoku_th = sudoku_box.clone();
+                                adaptiveThreshold(sudoku_box, sudoku_th, 255, CV_ADAPTIVE_THRESH_GAUSSIAN_C, CV_THRESH_BINARY_INV, 101, 1);
+                                
+                                /* To adjust parameters, we can write the image */
+                                // imwrite( "SudokuTh.png", sudoku_th );
+                                
+                                /* Process all boxes and classify whether they are empty (we'll say 0) or there is a number 1-9 */
+                                vector<vector<unsigned int>> rec_digits(9,vector<unsigned int>(9));
+                                for(std::size_t ii=0; ii<9; ++ii)
+                                {
+                                    for(std::size_t jj=0; jj<9; ++jj)
+                                    {
+                                        /* Get the square as an image */
+                                        Mat digit_box(sudoku_th, cv::Rect(round(boxes[ii][jj].first.x)-ulx, round(boxes[ii][jj].first.y)-uly,
+                                                                          round(boxes[ii][jj].second.x-boxes[ii][jj].first.x),
+                                                                          round(boxes[ii][jj].second.y-boxes[ii][jj].first.y)));
+                                        
+                                        /* Recognize the digit using the OCR */
+                                        rec_digits[ii][jj] = recognize_digit(digit_box, tess);
+                                        
+                                        /* To debug, we can write the binarized small images */
+                                        // stringstream ss;
+                                        // ss << "/Users/jpont/Downloads/Sudoku_" << ii+1 << "_" << jj+1 << ".png";
+                                        // imwrite(ss.str().c_str(), digit_box );
+                                    }
+                                }
+                                
+                                if (mode==5)
+                                {
+                                    /* Plot the recognized numbers on top of the image */
+                                    for(std::size_t ii=0; ii<9; ++ii)
+                                        for(std::size_t jj=0; jj<9; ++jj)
+                                            if (rec_digits[ii][jj]!=0)
+                                            {
+                                                Point text_pos(boxes[ii][jj].first.x+(boxes[ii][jj].second.x-boxes[ii][jj].first.x)/5,
+                                                               boxes[ii][jj].second.y-(boxes[ii][jj].second.y-boxes[ii][jj].first.y)/5);
+                                                stringstream ss;
+                                                ss << (int)rec_digits[ii][jj];
+                                                putText(frame, ss.str(), text_pos, CV_FONT_HERSHEY_DUPLEX, /*Size*/1,
+                                                        Scalar(0,0,255), /*Thickness*/ 1, 8);
+                                            }
+                                }
+                                else
+                                {
+                                    /* Create the Sudoku class */
+                                    const int N = 3;
+                                    Sudoku<N> sudoku;
+                                    
+                                    /* Set the recognized digits */
+                                    for(std::size_t ii=0; ii<N*N; ++ii)
+                                        for(std::size_t jj=0; jj<N*N; ++jj)
+                                            sudoku.set_value(ii, jj, rec_digits[ii][jj]);
+                                    
+                                    /* Let's try to solve it. If we solved it, plot the 
+                                     * numbers in the gaps using augmenting reality */
+                                    if(sudoku.solve())
+                                        for(std::size_t ii=0; ii<N*N; ++ii)
+                                            for(std::size_t jj=0; jj<N*N; ++jj)
+                                                if (rec_digits[ii][jj]==0)
+                                                {
+                                                    Point text_pos(boxes[ii][jj].first.x +(boxes[ii][jj].second.x-boxes[ii][jj].first.x)/5,
+                                                                   boxes[ii][jj].second.y-(boxes[ii][jj].second.y-boxes[ii][jj].first.y)/5);
+                                                    stringstream ss;
+                                                    ss << (int)sudoku.get_value(ii,jj);
+                                                    putText(frame, ss.str(), text_pos, CV_FONT_HERSHEY_DUPLEX, /*Size*/1,
+                                                            Scalar(0,0,255), /*Thickness*/ 1, 8);
+                                                }
+                            
+                                }
+                            }
                         }
                     }
                 }
@@ -399,6 +552,12 @@ int process(VideoCapture& capture)
             case '4':
                 mode = 4;
                 break;
+            case '5':
+                mode = 5;
+                break;
+            case '6':
+                mode = 6;
+                break;
             case 27: //escape key
                 return 0;
             default:
@@ -406,15 +565,6 @@ int process(VideoCapture& capture)
         }
     }
     return 0;
-}
-
-
-
-
-int main()
-{
-    VideoCapture capture(0);
-    return process(capture);
 }
 
 
