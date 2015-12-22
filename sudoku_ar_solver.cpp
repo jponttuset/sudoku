@@ -10,6 +10,7 @@
 #include <vector>
 #include <unordered_set>
 #include <string>
+#include <map>
 
 /* OpenCV includes */
 #include "opencv2/highgui/highgui.hpp"
