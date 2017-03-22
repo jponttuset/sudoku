@@ -1,12 +1,2 @@
-
-Sudoku.xcodeproj/project.pbxproj
-
-Sudoku.xcodeproj/project.xcworkspace/contents.xcworkspacedata
-
-Sudoku.xcodeproj/project.xcworkspace/xcuserdata/jpont.xcuserdatad/UserInterfaceState.xcuserstate
-
-Sudoku.xcodeproj/project.xcworkspace/xcshareddata/Sudoku.xccheckout
-
-Sudoku.xcodeproj/xcuserdata/jpont.xcuserdatad/xcschemes/xcschememanagement.plist
-
-Sudoku.xcodeproj/xcuserdata/jpont.xcuserdatad/xcschemes/Sudoku.xcscheme
+sudoku_ar_solver
+*.o
